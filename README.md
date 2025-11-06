@@ -2,13 +2,13 @@
 
 **Multi-MIME Type Wayland Clipboard Utility**
 
-If you use Wayland and have ever tried to paste a screenshot into a terminal application (VS Code terminal, Claude Code, etc.) and gotten binary garbage instead of a file path - this tool is for you.
+If you use Wayland and have ever tried to paste a screenshot into a terminal application (VS Code terminal, Claude Code, etc.) and nothing happens (or even worse, binary bullshit) instead of what you expected, this tool is for you.
 
 ## The Problem
 
-**On X11:** `xclip` could offer multiple clipboard formats. Apps chose what they wanted.
+**On X11:** `xclip` could offer multiple clipboard formats. Apps generally chose what format they want.
 
-**On Wayland:** `wl-clipboard` (the standard tool) can only offer **one MIME type at a time**.
+**On Wayland:** `wl-clipboard` (the standard tool on wl) will only offer **one MIME type at a time**.
 
 ### Real-World Impact
 
@@ -19,23 +19,27 @@ grim screenshot.png
 # Copy with wl-copy
 wl-copy < screenshot.png
 
-# Paste in Discord → ✅ Works! (gets image data)
-# Paste in terminal → ❌ Binary garbage (��PNG...)
+# Paste in Discord → works fine
+# Paste in terminal applications like Claude code → literally nothing happens
 ```
 
-You can't paste it as an **image** in Discord AND as a **file path** in your terminal. You have to choose one format.
+Ie you can't paste it as an image in Discord AND as a file path in your terminal apps. You have to choose ONE format, which is fucking annoying. 
+For example, if i wanna debug complicated web development, i'd usually take a screenshot and show it to my LLM CLI. But when i take the damn picture, i cant just paste it in the terminal. I literally have to 1) take screenshot, manually save it, go to my file explorer, find the damn picture, copy it manually (bc ctrl+c doesnt cut it), and THEN paste it into the LLM CLI in the terminal. 
+<img width="340" height="423" alt="image" src="https://github.com/user-attachments/assets/02c075e6-39a5-48a5-9c45-1be97225b426" />
 
-## Why Won't They Fix It?
+
+## So why is no one fixing this?
 
 The `wl-clipboard` maintainer [explicitly won't add this](https://github.com/bugaevc/wl-clipboard/issues/71):
-
 > "It's unclear how this would look in the command-line interface... this is getting too complicated for the command-line tool."
 
 The problem: CLI tools use stdin for data. With multiple MIME types, where does each type's data come from? The design doesn't have a clean answer.
 
 His recommendation: **Use the Wayland protocol directly.**
+So thats what i did.
 
-## Our Solution
+## My Solution
+<img width="220" height="165" alt="image" src="https://github.com/user-attachments/assets/9acd7caa-a142-48d6-9aa4-5e63b2760484" />
 
 `wl-clip-multi` uses the Wayland protocol directly (via `pywayland`) to offer **6 MIME types simultaneously**:
 
