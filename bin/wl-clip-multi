@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""
+wl-clip-multi - Multi-MIME Type Wayland Clipboard Utility
+
+A clipboard tool that offers multiple MIME types simultaneously, allowing
+different applications to receive clipboard content in their preferred format.
+
+Example use cases:
+- Copy a screenshot and paste it as an image in visual apps (Discord, Obsidian)
+  AND as a file path in terminals (Claude Code, VS Code terminal)
+- Copy files from a file manager with proper compatibility across all apps
+
+Usage:
+    wl-clip-multi <file-path>
+    wl-clip-multi --help
+    wl-clip-multi --version
+
+GitHub: https://github.com/mrdrbrdr/wl-clip-multi
+License: GPL-3.0
+"""
+
+import sys
+import os
+import argparse
+import signal
+from pathlib import Path
+
+try:
+    from pywayland.client import Display
+    from pywayland.protocol.wayland import WlDataDeviceManager, WlSeat
+except ImportError:
+    print("Error: pywayland library not found.", file=sys.stderr)
+    print("Install it with: pip install pywayland", file=sys.stderr)
+    sys.exit(1)
+
+
+__version__ = "1.0.0"
+
+
+class MultiMimeClipboard:
+    """
+    Clipboard provider that offers multiple MIME types simultaneously.
+
+    Mimics the behavior of GNOME Nautilus file manager, which allows files
+    to be pasted both as file references (in terminals) and as content
+    (in visual applications).
+    """
+
+    def __init__(self, file_path):
+        self.file_path = Path(file_path).resolve()
+
+        if not self.file_path.exists():
+            raise FileNotFoundError(f"File not found: {self.file_path}")
+
+        # Read file data for content-based MIME types
+        with open(self.file_path, 'rb') as f:
+            self.file_data = f.read()
+
+        # Detect MIME type for the file
+        self.mime_type = self._detect_mime_type()
+
+    def _detect_mime_type(self):
+        """Detect MIME type based on file extension."""
+        suffix = self.file_path.suffix.lower()
+        mime_types = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.bmp': 'image/bmp',
+            '.webp': 'image/webp',
+            '.svg': 'image/svg+xml',
+            '.txt': 'text/plain',
+            '.pdf': 'application/pdf',
+        }
+        return mime_types.get(suffix, 'application/octet-stream')
+
+    def serve_with_pywayland(self):
+        """
+        Use pywayland to offer multiple MIME types through the Wayland protocol.
+
+        This connects directly to the Wayland compositor and creates a data source
+        that offers content in multiple formats simultaneously.
+        """
+        # Initialize Wayland connection
+        display = Display()
+        display.connect()
+
+        registry = display.get_registry()
+
+        # Get compositor, seat, and data device manager
+        seat = None
+        data_device_manager = None
+
+        def registry_handler(registry, id, interface, version):
+            nonlocal seat, data_device_manager
+
+            if interface == 'wl_seat':
+                seat = registry.bind(id, WlSeat, version)
+            elif interface == 'wl_data_device_manager':
+                data_device_manager = registry.bind(id, WlDataDeviceManager, version)
+
+        registry.dispatcher['global'] = registry_handler
+        display.dispatch(block=True)
+        display.roundtrip()
+
+        if not seat or not data_device_manager:
+            raise RuntimeError("Could not get required Wayland objects")
+
+        # Create data source
+        data_source = data_device_manager.create_data_source()
+
+        # Offer MIME types in the EXACT order GNOME Nautilus does
+        # This ensures maximum compatibility across different applications
+        data_source.offer('x-special/gnome-copied-files')
+        data_source.offer('text/plain;charset=utf-8')
+        data_source.offer('text/uri-list')
+        data_source.offer('application/vnd.portal.filetransfer')
+        data_source.offer('application/vnd.portal.files')
+        data_source.offer(self.mime_type)
+
+        # Prepare clipboard data formats (EXACT format as Nautilus)
+        # GNOME format: "copy\nfile:///path/to/file" (NO trailing newline!)
+        gnome_format = f'copy\nfile://{self.file_path}'.encode('utf-8')
+        # URI list format: "file:///path/to/file\n"
+        file_uri = f'file://{self.file_path}\n'.encode('utf-8')
+        # Plain text: just the path
+        plain_text = str(self.file_path).encode('utf-8')
+
+        # Handle send requests from applications
+        def send_handler(data_source, mime_type, fd):
+            """
+            Called when an application requests clipboard content.
+            Serves the appropriate data based on requested MIME type.
+            """
+            if os.getenv('WL_CLIP_MULTI_DEBUG'):
+                print(f"App requested MIME type: {mime_type}", file=sys.stderr, flush=True)
+
+            try:
+                if mime_type == 'x-special/gnome-copied-files':
+                    os.write(fd, gnome_format)
+                elif mime_type == 'text/uri-list':
+                    os.write(fd, file_uri)
+                elif mime_type in ('text/plain', 'text/plain;charset=utf-8'):
+                    os.write(fd, plain_text)
+                elif mime_type in ('application/vnd.portal.filetransfer',
+                                   'application/vnd.portal.files'):
+                    # Portal types - just offer them (may not need actual data)
+                    pass
+                elif mime_type == self.mime_type:
+                    os.write(fd, self.file_data)
+            except Exception as e:
+                print(f"Error writing to fd: {e}", file=sys.stderr, flush=True)
+            finally:
+                try:
+                    os.close(fd)
+                except:
+                    pass
+
+        data_source.dispatcher['send'] = send_handler
+
+        # Set as clipboard selection
+        data_device = data_device_manager.get_data_device(seat)
+        data_device.set_selection(data_source, 0)  # 0 = no serial (for clipboard)
+
+        # Force compositor to process the selection
+        display.flush()
+        display.roundtrip()
+
+        if os.getenv('WL_CLIP_MULTI_DEBUG'):
+            print(f"Serving clipboard with file: {self.file_path}", file=sys.stderr, flush=True)
+            print(f"MIME types offered: 6 types including {self.mime_type}", file=sys.stderr, flush=True)
+
+        # Handle Ctrl+C gracefully
+        def signal_handler(sig, frame):
+            if os.getenv('WL_CLIP_MULTI_DEBUG'):
+                print("\nClipboard daemon stopped", file=sys.stderr)
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+        # Run event loop - keeps serving clipboard requests
+        while True:
+            display.dispatch(block=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Multi-MIME type Wayland clipboard utility',
+        epilog='For more information, visit: https://github.com/mrdrbrdr/wl-clip-multi'
+    )
+    parser.add_argument('file', nargs='?', help='File to copy to clipboard')
+    parser.add_argument('--version', action='version', version=f'wl-clip-multi {__version__}')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
+
+    args = parser.parse_args()
+
+    if args.debug:
+        os.environ['WL_CLIP_MULTI_DEBUG'] = '1'
+
+    if not args.file:
+        parser.print_help()
+        print("\nError: No file specified", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        clipboard = MultiMimeClipboard(args.file)
+        clipboard.serve_with_pywayland()
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        if os.getenv('WL_CLIP_MULTI_DEBUG'):
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

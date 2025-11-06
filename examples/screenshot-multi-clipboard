@@ -1,0 +1,43 @@
+#!/bin/bash
+# Example: Screenshot with Multi-MIME Clipboard
+#
+# This script demonstrates using wl-clip-multi for screenshots.
+# It captures a screenshot and copies it to clipboard with multiple MIME types,
+# allowing you to paste it as an image in visual apps OR as a file path in terminals.
+
+# Configuration
+OUTPUT_DIR="${HOME}/Pictures"
+SCREENSHOT_TOOL="grim"  # or "scrot", "spectacle", etc.
+
+# Check dependencies
+for cmd in grim slurp wl-clip-multi; do
+    if ! command -v "$cmd" &> /dev/null; then
+        notify-send "Error" "Required command not found: $cmd" -u critical
+        exit 1
+    fi
+done
+
+# Kill any existing slurp processes
+pkill slurp && exit 0
+
+# Select region
+SELECTION=$(slurp 2>/dev/null)
+[ -z "$SELECTION" ] && exit 0
+
+# Generate filename
+FILENAME="$OUTPUT_DIR/screenshot-$(date +'%Y-%m-%d_%H-%M-%S').png"
+
+# Take screenshot
+grim -g "$SELECTION" "$FILENAME"
+
+# Kill any existing clipboard daemons
+pkill -9 -f "wl-clip-multi" 2>/dev/null
+
+# Copy to clipboard with multi-MIME support
+nohup wl-clip-multi "$FILENAME" >/dev/null 2>&1 &
+disown
+
+# Give daemon time to initialize
+sleep 1
+
+notify-send "Screenshot ready" "Saved & copied to clipboard" -t 2000
