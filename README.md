@@ -60,15 +60,11 @@ Apps request their preferred type. Mimics GNOME Nautilus clipboard format for co
 ## Troubleshooting
 
 **Clipboard clears immediately?**
+
 Install `wl-clip-persist` to preserve the multi-MIME clipboard:
 ```bash
 sudo pacman -S wl-clip-persist
 wl-clip-persist --clipboard regular &
-```
-
-**PyWayland not found?**
-```bash
-pip install pywayland
 ```
 
 ## Why This Exists
