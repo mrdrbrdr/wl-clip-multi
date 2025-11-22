@@ -109,23 +109,12 @@ Make it executable: `chmod +x ~/.config/autostart/wl-clip-persist.sh`
 wl-clip-persist --clipboard regular &
 ```
 
-That's it. 
+That's it basically.
 
 
 ## Technical Details
 See [TECHNICAL.md](TECHNICAL.md) for:
-- MIME type specifications and byte-level formats
-- Wayland protocol implementation details
-- Comparison with other clipboard tools
-- Debugging and development info
 
-## Why This Works Universally
-
-This is a **Wayland protocol solution** that works on Hyprland, Sway, GNOME (Wayland session), KDE Plasma (Wayland session), or any ny Wayland compositor
-
-The problem (wl-clipboard limitation) affects everyone on Wayland (i think), so the solution works everywhere.
-
-## License
 GPL-3.0
 
 ## Links
